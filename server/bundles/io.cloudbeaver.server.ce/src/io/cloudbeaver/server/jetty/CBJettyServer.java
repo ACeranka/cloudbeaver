@@ -19,25 +19,26 @@ package io.cloudbeaver.server.jetty;
 import io.cloudbeaver.model.config.CBServerConfig;
 import io.cloudbeaver.registry.WebServiceRegistry;
 import io.cloudbeaver.server.CBApplication;
-import io.cloudbeaver.server.CBConstants;
-import io.cloudbeaver.server.WebApplication;
+import io.cloudbeaver.server.GQLApplicationAdapter;
 import io.cloudbeaver.server.graphql.GraphQLEndpoint;
 import io.cloudbeaver.server.servlets.CBImageServlet;
 import io.cloudbeaver.server.servlets.CBStaticServlet;
-import io.cloudbeaver.server.servlets.WebStatusServlet;
-import io.cloudbeaver.server.websockets.CBJettyWebSocketManager;
+import io.cloudbeaver.server.servlets.CBStatusServlet;
+import io.cloudbeaver.server.websockets.CBWebSocketServerConfigurator;
+import io.cloudbeaver.server.websockets.EchoServerEndpoint;
 import io.cloudbeaver.service.DBWServiceBindingServlet;
 import io.cloudbeaver.service.DBWServiceBindingWebSocket;
+import jakarta.websocket.server.ServerEndpointConfig;
 import org.eclipse.jetty.ee10.servlet.ErrorPageErrorHandler;
 import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee10.servlet.ServletHolder;
 import org.eclipse.jetty.ee10.servlet.ServletMapping;
+import org.eclipse.jetty.ee10.websocket.jakarta.server.config.JakartaWebSocketServletContainerInitializer;
 import org.eclipse.jetty.server.*;
 import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.DefaultSessionIdManager;
 import org.eclipse.jetty.session.NullSessionDataStore;
 import org.eclipse.jetty.util.resource.ResourceFactory;
-import org.eclipse.jetty.websocket.server.WebSocketUpgradeHandler;
 import org.eclipse.jetty.xml.XmlConfiguration;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
@@ -48,7 +49,6 @@ import org.jkiss.utils.CommonUtils;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Arrays;
 
 public class CBJettyServer {
@@ -105,8 +105,7 @@ public class CBJettyServer {
                     "static", new CBStaticServlet(Path.of(serverConfiguration.getContentRoot()))
                 );
                 staticServletHolder.setInitParameter("dirAllowed", "false");
-                staticServletHolder.setInitParameter("cacheControl",
-                    "public, max-age=" + CBConstants.STATIC_CACHE_SECONDS);
+                staticServletHolder.setInitParameter("cacheControl", "public, max-age=" + CBStaticServlet.STATIC_CACHE_SECONDS);
                 servletContextHandler.addServlet(staticServletHolder, "/");
 
                 if (Files.isSymbolicLink(contentRootPath)) {
@@ -116,7 +115,7 @@ public class CBJettyServer {
                 ServletHolder imagesServletHolder = new ServletHolder("images", new CBImageServlet());
                 servletContextHandler.addServlet(imagesServletHolder, serverConfiguration.getServicesURI() + "images/*");
 
-                servletContextHandler.addServlet(new ServletHolder("status", new WebStatusServlet()), "/status");
+                servletContextHandler.addServlet(new ServletHolder("status", new CBStatusServlet()), "/status");
 
                 servletContextHandler.addServlet(new ServletHolder("graphql", new GraphQLEndpoint()), serverConfiguration.getServicesURI() + "gql/*");
                 servletContextHandler.addEventListener(new CBServerContextListener(application));
@@ -137,7 +136,7 @@ public class CBJettyServer {
                 }
 
                 CBJettyWebSocketContext webSocketContext = new CBJettyWebSocketContext(server, servletContextHandler);
-                for (DBWServiceBindingWebSocket<CBApplication> wsb : WebServiceRegistry.getInstance()
+                for (DBWServiceBindingWebSocket wsb : WebServiceRegistry.getInstance()
                     .getWebServices(DBWServiceBindingWebSocket.class)
                 ) {
                     if (wsb.isApplicable(this.application)) {
@@ -149,18 +148,20 @@ public class CBJettyServer {
                     }
                 }
 
-                WebSocketUpgradeHandler webSocketHandler = WebSocketUpgradeHandler.from(server, servletContextHandler, (wsContainer) -> {
-                        wsContainer.setIdleTimeout(Duration.ofMinutes(5));
-                        // Add websockets
-                        wsContainer.addMapping(
-                            serverConfiguration.getServicesURI() + "ws",
-                            new CBJettyWebSocketManager(this.application.getSessionManager())
-                        );
-                    }
-                );
-                servletContextHandler.insertHandler(webSocketHandler);
+                // Add jakarta.websocket support
+                JakartaWebSocketServletContainerInitializer.configure(servletContextHandler, (context, container) ->
+                {
+                    // Add echo endpoint to server container
+                    ServerEndpointConfig echoConfig = ServerEndpointConfig.Builder
+                        .create(
+                            EchoServerEndpoint.class,
+                            serverConfiguration.getServicesURI() + "ws"
+                        ).configurator(new CBWebSocketServerConfigurator())
+                        .build();
+                    container.addEndpoint(echoConfig);
+                });
 
-                JettyUtils.initSessionManager(
+                initSessionManager(
                     this.application.getMaxSessionIdleTime(),
                     this.application,
                     server,
@@ -216,6 +217,35 @@ public class CBJettyServer {
         }
         var sslConfiguration = Path.of(sslConfigurationPath);
         return sslConfiguration.isAbsolute() ? sslConfiguration : application.getHomeDirectory().resolve(sslConfiguration);
+    }
+
+    public static void initSessionManager(
+        long maxIdleTime,
+        @NotNull GQLApplicationAdapter application,
+        @NotNull Server server,
+        @NotNull ServletContextHandler servletContextHandler
+    ) {
+        // Init sessions persistence
+        CBSessionHandler sessionHandler = new CBSessionHandler(application);
+        sessionHandler.setRefreshCookieAge(CBSessionHandler.ONE_MINUTE);
+        int intMaxIdleSeconds;
+        if (maxIdleTime > Integer.MAX_VALUE) {
+            log.warn("Max session idle time value is greater than Integer.MAX_VALUE. Integer.MAX_VALUE will be used instead");
+            maxIdleTime = Integer.MAX_VALUE;
+        }
+        intMaxIdleSeconds = (int) (maxIdleTime / 1000);
+        log.debug("Max http session idle time: " + intMaxIdleSeconds + "s");
+        sessionHandler.setMaxInactiveInterval(intMaxIdleSeconds);
+        sessionHandler.setMaxCookieAge(intMaxIdleSeconds);
+
+        DefaultSessionCache sessionCache = new DefaultSessionCache(sessionHandler);
+        sessionCache.setSessionDataStore(new NullSessionDataStore());
+        sessionHandler.setSessionCache(sessionCache);
+        servletContextHandler.setSessionHandler(sessionHandler);
+
+        DefaultSessionIdManager idMgr = new DefaultSessionIdManager(server);
+        idMgr.setWorkerName(null);
+        server.addBean(idMgr, true);
     }
 
     public synchronized void refreshJettyConfig() {

@@ -17,22 +17,31 @@
 package io.cloudbeaver.model.session;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.jkiss.code.Nullable;
 
 public class WebHttpRequestInfo {
 
+    @Nullable
     private final String id;
+    @Nullable
     private final Object locale;
+    @Nullable
     private final String lastRemoteAddress;
+    @Nullable
     private final String lastRemoteUserAgent;
 
     public WebHttpRequestInfo(HttpServletRequest request) {
-        this.id = request.getSession().getId();
+        this.id = request.getSession() == null ? null : request.getSession().getId();
         this.locale = request.getAttribute("locale");
         this.lastRemoteAddress = request.getRemoteAddr();
         this.lastRemoteUserAgent = request.getHeader("User-Agent");
     }
 
-    public WebHttpRequestInfo(String id, Object locale, String lastRemoteAddress, String lastRemoteUserAgent) {
+    public WebHttpRequestInfo(
+        @Nullable String id,
+        @Nullable Object locale,
+        @Nullable String lastRemoteAddress,
+        @Nullable String lastRemoteUserAgent) {
         this.id = id;
         this.locale = locale;
         this.lastRemoteAddress = lastRemoteAddress;
@@ -43,14 +52,17 @@ public class WebHttpRequestInfo {
         return id;
     }
 
+    @Nullable
     public Object getLocale() {
         return locale;
     }
 
+    @Nullable
     public String getLastRemoteAddress() {
         return lastRemoteAddress;
     }
 
+    @Nullable
     public String getLastRemoteUserAgent() {
         return lastRemoteUserAgent;
     }

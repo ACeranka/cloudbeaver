@@ -17,13 +17,16 @@
 package io.cloudbeaver.server.websockets;
 
 import com.google.gson.Gson;
+import jakarta.websocket.Endpoint;
+import jakarta.websocket.EndpointConfig;
+import jakarta.websocket.MessageHandler;
+import jakarta.websocket.Session;
 import org.eclipse.jetty.websocket.api.Callback;
-import org.eclipse.jetty.websocket.api.Session;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.websocket.WSUtils;
 import org.jkiss.dbeaver.model.websocket.event.WSEvent;
 
-public class CBAbstractWebSocket extends Session.Listener.AbstractAutoDemanding {
+public class CBAbstractWebSocket extends Endpoint implements MessageHandler.Whole<String> {
     private static final Log log = Log.getLog(CBAbstractWebSocket.class);
     protected static final Gson gson = WSUtils.clientGson;
 
@@ -51,5 +54,15 @@ public class CBAbstractWebSocket extends Session.Listener.AbstractAutoDemanding 
         if (session != null) {
             getSession().close();
         }
+    }
+
+    @Override
+    public void onOpen(Session session, EndpointConfig config) {
+        session.addMessageHandler(this);
+    }
+
+    @Override
+    public void onMessage(String message) {
+
     }
 }

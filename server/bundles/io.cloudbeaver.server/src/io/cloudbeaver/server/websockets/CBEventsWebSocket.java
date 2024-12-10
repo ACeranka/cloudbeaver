@@ -35,8 +35,6 @@ public class CBEventsWebSocket extends CBAbstractWebSocket implements CBWebSessi
 
     @NotNull
     private final BaseWebSession webSession;
-    @NotNull
-    private final Callback callback;
 
     public CBEventsWebSocket(@NotNull BaseWebSession webSession) {
         this.webSession = webSession;
@@ -108,6 +106,7 @@ public class CBEventsWebSocket extends CBAbstractWebSocket implements CBWebSessi
     public void handleWebSessionEvent(WSEvent event) {
         super.handleEvent(event);
     }
+
     @Override
     protected void handleEventException(Throwable e) {
         super.handleEventException(e);
@@ -119,8 +118,4 @@ public class CBEventsWebSocket extends CBAbstractWebSocket implements CBWebSessi
         return webSession;
     }
 
-    @NotNull
-    public Callback getCallback() {
-        return callback;
-    }
 }
